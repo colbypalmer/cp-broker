@@ -30,7 +30,7 @@ class Connection(models.Model):
 
 
 class FacebookProfile(FacebookModel):
-    user = models.OneToOneField(User, related_name='Facebook Profile')
+    user = models.OneToOneField(User, related_name='profile')
 
 
 @receiver(post_save)
