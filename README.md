@@ -5,4 +5,4 @@ _Note: This is not quite ready for production. Working on an admin interface and
 This is the beginnings of an attempt to build a common interface to assist with connecting users
 from your Django application to various social networks.
 
-Version: 0.01a
+Version: 0.1.0

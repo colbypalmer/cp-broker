@@ -1,11 +1,18 @@
+import datetime
+import json
 import tweepy
+import urllib
+import urlparse
+from dateutil import parser
 
 from django.conf import settings
-from django.shortcuts import render
-from django.http import HttpResponseRedirect, Http404
+from django.core.exceptions import ObjectDoesNotExist
 from django.core.urlresolvers import reverse
+from django.http import HttpResponseRedirect, Http404
+from django.shortcuts import render
 from django.views.generic import View, DetailView
-from models import Service, Connection, FacebookProfile
+
+from .models import Service, Connection, FacebookProfile
 
 
 class BrokerListView(View):
@@ -83,6 +90,49 @@ class BrokerServiceNewView(DetailView):
 
         elif self.kwargs['slug'] == 'facebook':
 
-            # Check to make sure we have a FacebookProfile
-            fb_profile = FacebookProfile.objects.get_or_create(user=request.user)
-            return render(request, 'broker/facebook_connect.html', {'fb_profile': fb_profile})
+            scope = 'public_profile,user_photos,user_status,user_videos'
+
+            args = dict(client_id=settings.FACEBOOK_APP_ID, scope=scope,
+                        redirect_uri=u'http://{}{}'.format(request.META['HTTP_HOST'], request.META['PATH_INFO']))
+
+            if 'code' in request.GET:  # process FB auth token
+
+                args['client_secret'] = settings.FACEBOOK_APP_SECRET
+                args['code'] = request.GET['code']
+                response = urlparse.parse_qs(urllib.urlopen(
+                    'https://graph.facebook.com/oauth/access_token?' + urllib.urlencode(args)).read())
+                access_token = response['access_token'][-1]
+                expiry = int(response['expires'][-1])
+                now = datetime.datetime.now()
+                expires_at = now + datetime.timedelta(seconds=expiry)
+
+                # Get user profile
+                profile_json = json.load(urllib.urlopen(
+                    'https://graph.facebook.com/me?' + urllib.urlencode(dict(access_token=access_token))))
+
+                connection, created = Connection.objects.get_or_create(user=request.user, provider='facebook')
+                connection.uid = profile_json['id']
+                connection.token = access_token
+                connection.token_expires = expires_at
+                connection.save()
+                profile, created = FacebookProfile.objects.get_or_create(connection=connection)
+                profile.about = profile_json['about']
+                profile.bio = profile_json['bio']
+                profile.name = profile_json['name']
+                profile.profile_url = profile_json['link']
+                profile.website_url = profile_json['website']
+                profile.date_of_birth = parser.parse(profile_json['birthday']).strftime('%Y-%m-%d')
+                profile.gender = profile_json['gender']
+                profile.raw_data = profile_json
+                profile.save()
+
+                return HttpResponseRedirect(reverse('broker_list'))
+
+            else:
+
+                try:
+                    fb_connection = Connection.objects.get(provider='facebook', user=request.user)
+                except ObjectDoesNotExist:
+                    return HttpResponseRedirect('https://graph.facebook.com/oauth/authorize?' + urllib.urlencode(args))
+
+                return render(request, 'broker/facebook_connect.html', {'fb_connection': fb_connection})
